@@ -8,3 +8,4 @@
 # Keep model classes
 -keep class com.uhdcam.app.ai.** { *; }
 -keep class com.uhdcam.app.camera.** { *; }
+-keep class com.uhdcam.app.databinding.** { *; }

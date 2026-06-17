@@ -60,14 +60,20 @@ class GalleryActivity : AppCompatActivity() {
             emptyView.visibility = View.GONE
             recycler.visibility = View.VISIBLE
             recycler.adapter = ImageAdapter(this, images) { file ->
-                val uri = FileProvider.getUriForFile(
-                    this, "${packageName}.fileprovider", file
-                )
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "image/*")
-                    flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                try {
+                    val uri = FileProvider.getUriForFile(
+                        this, "${packageName}.fileprovider", file
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "image/*")
+                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(
+                        this, "Cannot open image", android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 }
-                startActivity(intent)
             }
         }
     }

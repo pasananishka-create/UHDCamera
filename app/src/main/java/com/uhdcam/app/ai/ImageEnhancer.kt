@@ -11,13 +11,22 @@ class ImageEnhancer {
         if (bitmap.width < 10 || bitmap.height < 10) return bitmap
         var result = bitmap
 
-        result = edgePreservingDenoise(result)
-        result = luminanceContrastEnhancement(result)
-        result = adaptiveUnsharpMask(result, radius = 1, amount = 0.7f)
-        result = microcontrastEnhance(result)
-        result = saturationBoost(result, 1.15f)
+        var next = edgePreservingDenoise(result)
+        if (next !== result) { result.recycle(); result = next }
 
-        return if (result !== bitmap) result else bitmap
+        next = luminanceContrastEnhancement(result)
+        if (next !== result) { result.recycle(); result = next }
+
+        next = adaptiveUnsharpMask(result, radius = 1, amount = 0.7f)
+        if (next !== result) { result.recycle(); result = next }
+
+        next = microcontrastEnhance(result)
+        if (next !== result) { result.recycle(); result = next }
+
+        next = saturationBoost(result, 1.15f)
+        if (next !== result) { result.recycle(); result = next }
+
+        return result
     }
 
     @WorkerThread

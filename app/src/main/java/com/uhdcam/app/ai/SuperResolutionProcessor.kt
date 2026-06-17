@@ -158,14 +158,17 @@ class SuperResolutionProcessor(private val context: Context) {
                 val ew = minOf(BLOCK_SIZE, w - sx)
                 val eh = minOf(BLOCK_SIZE, h - sy)
 
+                var block: Bitmap? = null
+                var enhanced: Bitmap? = null
                 try {
-                    val block = Bitmap.createBitmap(bitmap, sx, sy, ew, eh)
-                    val enhanced = runSingleBlock(block, model)
+                    block = Bitmap.createBitmap(bitmap, sx, sy, ew, eh)
+                    enhanced = runSingleBlock(block, model)
                     canvas.drawBitmap(enhanced, (sx * scale).toFloat(), (sy * scale).toFloat(), null)
-                    enhanced.recycle()
-                    block.recycle()
                 } catch (e: Exception) {
                     Log.w(TAG, "Block processing failed at $sx,$sy", e)
+                } finally {
+                    enhanced?.recycle()
+                    block?.recycle()
                 }
             }
         }
@@ -176,6 +179,7 @@ class SuperResolutionProcessor(private val context: Context) {
         val w = block.width
         val h = block.height
         val inputSize = model.inputSize
+        if (inputSize <= 0) return runClassicalUpscale(block)
 
         val padW = if (w % 2 != 0) w + 1 else w
         val padH = if (h % 2 != 0) h + 1 else h
@@ -243,9 +247,7 @@ class SuperResolutionProcessor(private val context: Context) {
                 val buf = loadModelFile(modelFile)
                 tfliteModel = InterpreterWrapper(buf)
             } else {
-                val stream = context.assets.open(MODEL_FILENAME)
-                val bytes = stream.readBytes()
-                stream.close()
+                val bytes = context.assets.open(MODEL_FILENAME).use { it.readBytes() }
                 val buf = java.nio.ByteBuffer.allocateDirect(bytes.size)
                 buf.put(bytes)
                 buf.rewind()
@@ -258,12 +260,12 @@ class SuperResolutionProcessor(private val context: Context) {
     }
 
     private fun loadModelFile(file: File): java.nio.ByteBuffer {
-        val stream = java.io.FileInputStream(file)
-        val ch = stream.channel
-        val buf = ch.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, file.length())
-        ch.close()
-        stream.close()
-        return buf
+        java.io.FileInputStream(file).use { stream ->
+            val ch = stream.channel
+            ch.use { _ ->
+                return ch.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, file.length())
+            }
+        }
     }
 
     private class InterpreterWrapper(private val modelBuffer: java.nio.ByteBuffer?) {

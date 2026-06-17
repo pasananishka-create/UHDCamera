@@ -1,6 +1,7 @@
 package com.uhdcam.app.camera
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.camera.core.*
@@ -59,7 +60,7 @@ class CameraController(
                 owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture
             )
             camera?.cameraInfo?.zoomState?.observe(owner) { state ->
-                onZoomChanged?.invoke(state.zoomRatio)
+                state?.let { onZoomChanged?.invoke(it.zoomRatio) }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to bind camera", e)
@@ -77,20 +78,22 @@ class CameraController(
         }
     }
 
-    fun takePicture(onSaved: ImageCapture.OnImageSavedCallback) {
+    fun takePicture(onSaved: (Uri) -> Unit, onError: (String) -> Unit) {
         val capture = imageCapture
         if (capture == null) {
-            onSaved.onError(ImageCaptureException(0, "Camera not initialized", null))
+            onError("Camera not initialized")
             return
         }
 
         try {
-            val photoDir = File(
-                context.getExternalFilesDir(null),
-                "captures"
-            )
+            val extDir = context.getExternalFilesDir(null)
+            if (extDir == null) {
+                onError("External storage not available")
+                return
+            }
+            val photoDir = File(extDir, "captures")
             if (!photoDir.exists() && !photoDir.mkdirs()) {
-                onSaved.onError(ImageCaptureException(0, "Cannot create capture directory", null))
+                onError("Cannot create capture directory")
                 return
             }
 
@@ -106,10 +109,18 @@ class CameraController(
                 .setMetadata(metadata)
                 .build()
 
-            capture.takePicture(outputOptions, cameraExecutor, onSaved)
+            capture.takePicture(outputOptions, cameraExecutor, object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    val uri = output.savedUri ?: Uri.fromFile(file)
+                    onSaved(uri)
+                }
+                override fun onError(exception: ImageCaptureException) {
+                    onError(exception.message ?: "Unknown error")
+                }
+            })
         } catch (e: Exception) {
             Log.e(TAG, "Take picture failed", e)
-            onSaved.onError(ImageCaptureException(0, e.message ?: "Unknown error", e))
+            onError(e.message ?: "Unknown error")
         }
     }
 

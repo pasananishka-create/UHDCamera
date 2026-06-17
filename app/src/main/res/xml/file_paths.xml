@@ -2,4 +2,5 @@
 <paths>
     <external-files-path name="camera_images" path="Pictures/UHDCamera/" />
     <external-path name="dcim" path="DCIM/UHDCamera/" />
+    <external-path name="gallery" path="Pictures/UHDCamera/" />
 </paths>

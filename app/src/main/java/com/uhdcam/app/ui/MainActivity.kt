@@ -164,30 +164,26 @@ class MainActivity : AppCompatActivity() {
         isProcessing = true
         showProcessing(true)
 
-        cameraController.takePicture(object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                val savedUri = output.savedUri ?: run {
-                    resetAfterError("No image URI returned")
-                    return
-                }
+        cameraController.takePicture(
+            onSaved = { uri ->
                 if (aiEnhanceEnabled) {
                     lifecycleScope.launch {
                         if (!isActive) return@launch
-                        enhanceAndSave(savedUri)
+                        enhanceAndSave(uri)
                     }
                 } else {
                     lifecycleScope.launch {
-                        registerInMediaStore(savedUri)
-                        onEnhanceComplete(savedUri.toString())
+                        registerInMediaStore(uri)
+                        onEnhanceComplete(uri.toString())
                     }
                 }
-            }
-            override fun onError(exception: ImageCaptureException) {
+            },
+            onError = { message ->
                 onMainThread {
-                    resetAfterError("Capture failed: ${exception.message}")
+                    resetAfterError("Capture failed: $message")
                 }
             }
-        })
+        )
     }
 
     private suspend fun enhanceAndSave(uri: Uri) {
