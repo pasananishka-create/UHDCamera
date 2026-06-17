@@ -70,7 +70,7 @@ class SuperResolutionProcessor(private val context: Context) {
         val h = maxOf(bitmap.height, MIN_DIM)
         val currentMp = (w * h) / 1_000_000f
         val targetMp = maxOf(ENHANCED_TARGET_MP, (currentMp * 2).toInt())
-        val targetScale = min(sqrt(targetMp / currentMp), 4.0)
+        val targetScale = min(sqrt(targetMp.toDouble() / currentMp), 4.0)
 
         val maxMem = Runtime.getRuntime().maxMemory()
         val needed = (w * targetScale).toLong() * (h * targetScale).toLong() * 4L * 3L
