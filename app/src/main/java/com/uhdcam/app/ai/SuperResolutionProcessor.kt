@@ -28,9 +28,9 @@ class SuperResolutionProcessor(private val context: Context) {
 
         val startTime = System.nanoTime()
         Log.d(TAG, "Enhancing: ${bitmap.width}x${bitmap.height}")
-        loadModelIfNeeded()
 
         val enhanced: Bitmap = try {
+            loadModelIfNeeded()
             if (tfliteModel != null && tfliteModel!!.isValid) {
                 runTFLiteSuperResolution(bitmap)
             } else {

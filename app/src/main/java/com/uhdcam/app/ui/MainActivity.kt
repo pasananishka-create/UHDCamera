@@ -188,9 +188,32 @@ class MainActivity : AppCompatActivity() {
         try {
             val resultPath = withContext(Dispatchers.IO) {
                 if (!isActive) return@withContext null
-                val bitmap = FileInputStream(file).use { stream ->
-                    BitmapFactory.decodeStream(stream)
+
+                val bitmap = try {
+                    val opts = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    BitmapFactory.decodeFile(file.absolutePath, opts)
+                    val sampleSize = estimateSampleSize(opts.outWidth, opts.outHeight)
+                    BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                        inMutable = false
+                    }.let { options ->
+                        FileInputStream(file).use { stream ->
+                            BitmapFactory.decodeStream(stream, null, options)
+                        }
+                    }
+                } catch (e: OutOfMemoryError) {
+                    Log.w(TAG, "OOM decoding, trying with higher sample", e)
+                    BitmapFactory.Options().apply {
+                        inSampleSize = estimateSampleSize(file) * 2
+                    }.let { options ->
+                        FileInputStream(file).use { stream ->
+                            BitmapFactory.decodeStream(stream, null, options)
+                        }
+                    }
                 } ?: return@withContext null
+
                 if (!isActive) { bitmap.recycle(); return@withContext null }
 
                 val enhanced = srProcessor.enhance(bitmap)
@@ -202,11 +225,35 @@ class MainActivity : AppCompatActivity() {
             }
             if (resultPath != null) {
                 onMainThread { onEnhanceComplete(resultPath) }
+            } else {
+                onMainThread { resetAfterError("Processing failed") }
             }
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OOM during enhancement", e)
+            System.gc()
+            onMainThread { resetAfterError("Image too large, try again") }
         } catch (e: Exception) {
             Log.e(TAG, "Enhancement failed", e)
             onMainThread { resetAfterError("Enhancement failed: ${e.message}") }
         }
+    }
+
+    private fun estimateSampleSize(w: Int, h: Int): Int {
+        if (w <= 0 || h <= 0) return 1
+        val mp = (w.toLong() * h) / 1_000_000
+        return when {
+            mp > 24 -> 4
+            mp > 12 -> 2
+            else -> 1
+        }
+    }
+
+    private fun estimateSampleSize(file: File): Int {
+        return try {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+            estimateSampleSize(opts.outWidth, opts.outHeight)
+        } catch (_: Exception) { 1 }
     }
 
     private fun saveEnhancedPhoto(bitmap: Bitmap): String? {
