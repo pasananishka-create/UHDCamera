@@ -211,7 +211,7 @@ class SuperResolutionProcessor(private val context: Context) {
         val currentMp = (w * h) / 1_000_000f
 
         val targetMp = ENHANCED_TARGET_MP.coerceAtLeast((currentMp * 2).toInt())
-        val scale = kotlin.math.sqrt(targetMp / currentMp).coerceAtMost(4.0)
+        val scale = kotlin.math.sqrt(targetMp / currentMp.toDouble()).coerceAtMost(4.0)
         val newW = (w * scale).toInt()
         val newH = (h * scale).toInt()
 
@@ -266,24 +266,22 @@ class SuperResolutionProcessor(private val context: Context) {
         val isValid: Boolean
 
         init {
+            var size = 0
+            var valid = false
             if (modelBuffer != null) {
                 try {
                     interpreter = org.tensorflow.lite.Interpreter(modelBuffer)
                     val inputShape = interpreter?.getInputTensor(0)?.shape()
-                    isValid = inputShape != null && inputShape.size >= 2
-                    inputSize = if (inputShape != null && inputShape.size >= 2) {
+                    valid = inputShape != null && inputShape.size >= 2
+                    size = if (inputShape != null && inputShape.size >= 2) {
                         inputShape[1].coerceAtMost(inputShape[2])
                     } else 0
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to create interpreter: ${e.message}")
-                    isValid = false
-                    inputSize = 0
                 }
-            } else {
-                interpreter = null
-                isValid = false
-                inputSize = 0
             }
+            isValid = valid
+            inputSize = size
         }
 
         fun run(input: FloatBuffer, output: FloatBuffer) {
