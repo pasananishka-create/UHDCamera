@@ -19,15 +19,16 @@ class SuperResolutionProcessor(private val context: Context) {
         private const val BLOCK_SIZE = 192
         private const val MAX_MEMORY_USAGE = 0.65
         private const val STEP_SCALE = 2.0
+        private const val MIN_DIM = 4
     }
 
     @WorkerThread
     fun enhance(bitmap: Bitmap): Bitmap {
+        if (bitmap.isRecycled || bitmap.width < MIN_DIM || bitmap.height < MIN_DIM) return bitmap
+
         val startTime = System.nanoTime()
         Log.d(TAG, "Enhancing: ${bitmap.width}x${bitmap.height}")
         loadModelIfNeeded()
-
-        if (bitmap.width < 2 || bitmap.height < 2) return bitmap
 
         val enhanced: Bitmap = try {
             if (tfliteModel != null && tfliteModel!!.isValid) {
@@ -46,13 +47,17 @@ class SuperResolutionProcessor(private val context: Context) {
 
         val finalResult = try {
             imageEnhancer.enhanceDetails(enhanced)
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OOM during detail enhancement", e)
+            System.gc()
+            enhanced
         } catch (e: Exception) {
             Log.w(TAG, "Detail enhancement failed", e)
             enhanced
         }
 
         if (enhanced !== bitmap && enhanced !== finalResult) {
-            enhanced.recycle()
+            try { enhanced.recycle() } catch (_: Exception) {}
         }
 
         val elapsed = (System.nanoTime() - startTime) / 1_000_000
@@ -61,8 +66,8 @@ class SuperResolutionProcessor(private val context: Context) {
     }
 
     private fun runClassicalUpscale(bitmap: Bitmap): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
+        val w = maxOf(bitmap.width, MIN_DIM)
+        val h = maxOf(bitmap.height, MIN_DIM)
         val currentMp = (w * h) / 1_000_000f
         val targetMp = maxOf(ENHANCED_TARGET_MP, (currentMp * 2).toInt())
         val targetScale = min(sqrt(targetMp / currentMp), 4.0)
@@ -71,8 +76,8 @@ class SuperResolutionProcessor(private val context: Context) {
         val needed = (w * targetScale).toLong() * (h * targetScale).toLong() * 4L * 3L
         if (needed > maxMem * MAX_MEMORY_USAGE) {
             val reducedScale = sqrt((maxMem * MAX_MEMORY_USAGE / (w.toLong() * h * 4L * 3L)).toDouble())
-            val rw = (w * reducedScale).toInt()
-            val rh = (h * reducedScale).toInt()
+            val rw = maxOf((w * reducedScale).toInt(), MIN_DIM)
+            val rh = maxOf((h * reducedScale).toInt(), MIN_DIM)
             val scaled = Bitmap.createScaledBitmap(bitmap, rw, rh, true)
             return imageEnhancer.adaptiveSharpen(scaled)
         }
@@ -87,30 +92,33 @@ class SuperResolutionProcessor(private val context: Context) {
 
         while (remaining > 1.3) {
             val step = min(STEP_SCALE, remaining)
-            val sw = (current.width * step).toInt()
-            val sh = (current.height * step).toInt()
+            val sw = maxOf((current.width * step).toInt(), MIN_DIM)
+            val sh = maxOf((current.height * step).toInt(), MIN_DIM)
+            if (sw <= current.width && sh <= current.height) break
             val scaled = Bitmap.createScaledBitmap(current, sw, sh, true)
-            if (needRecycle) current.recycle()
+            if (needRecycle) try { current.recycle() } catch (_: Exception) {}
             current = imageEnhancer.adaptiveSharpen(scaled)
             needRecycle = true
             remaining /= step
         }
 
         if (remaining > 1.01) {
-            val sw = (current.width * remaining).toInt()
-            val sh = (current.height * remaining).toInt()
-            val scaled = Bitmap.createScaledBitmap(current, sw, sh, true)
-            if (needRecycle) current.recycle()
-            current = scaled
+            val sw = maxOf((current.width * remaining).toInt(), MIN_DIM)
+            val sh = maxOf((current.height * remaining).toInt(), MIN_DIM)
+            if (sw > current.width || sh > current.height) {
+                val scaled = Bitmap.createScaledBitmap(current, sw, sh, true)
+                if (needRecycle) try { current.recycle() } catch (_: Exception) {}
+                current = scaled
+            }
         }
 
         return current
     }
 
     private fun runLowMemoryUpscale(bitmap: Bitmap): Bitmap {
-        val scale = min(2.0, sqrt(3_000_000.0 / (bitmap.width * bitmap.height)))
-        val w = (bitmap.width * scale).toInt().coerceAtMost(2000)
-        val h = (bitmap.height * scale).toInt().coerceAtMost(2000)
+        val scale = min(2.0, sqrt(3_000_000.0 / maxOf(bitmap.width * bitmap.height, 1)))
+        val w = maxOf((bitmap.width * scale).toInt().coerceAtMost(2000), MIN_DIM)
+        val h = maxOf((bitmap.height * scale).toInt().coerceAtMost(2000), MIN_DIM)
         return Bitmap.createScaledBitmap(bitmap, w, h, true)
     }
 
@@ -193,10 +201,6 @@ class SuperResolutionProcessor(private val context: Context) {
                 outputBitmap.recycle()
             }
         } else outputBitmap
-    }
-
-    private fun runClassicalUpscaleOld(bitmap: Bitmap): Bitmap {
-        return runClassicalUpscale(bitmap)
     }
 
     private fun bitmapToFloatBuffer(bitmap: Bitmap): java.nio.FloatBuffer {

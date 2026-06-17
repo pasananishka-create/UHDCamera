@@ -1,11 +1,8 @@
 package com.uhdcam.app.camera
 
-import android.content.ContentValues
 import android.content.Context
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
+import android.util.Log
+import android.view.Surface
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -21,23 +18,30 @@ class CameraController(
     private val context: Context,
     private val previewView: PreviewView
 ) {
+    companion object {
+        private const val TAG = "CameraController"
+    }
+
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var lifecycleOwner: LifecycleOwner? = null
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     var onZoomChanged: ((Float) -> Unit)? = null
 
     fun startCamera(lifecycleOwner: LifecycleOwner) {
+        this.lifecycleOwner = lifecycleOwner
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
-            bindCamera(lifecycleOwner)
+            bindCamera()
         }, ContextCompat.getMainExecutor(context))
     }
 
-    private fun bindCamera(lifecycleOwner: LifecycleOwner) {
+    private fun bindCamera() {
         val provider = cameraProvider ?: return
+        val owner = lifecycleOwner ?: return
         provider.unbindAll()
 
         val preview = Preview.Builder()
@@ -46,62 +50,79 @@ class CameraController(
 
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setTargetRotation(previewView.display?.rotation ?: android.view.Surface.ROTATION_0)
+            .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
             .setFlashMode(ImageCapture.FLASH_MODE_AUTO)
             .build()
 
-        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
         try {
             camera = provider.bindToLifecycle(
-                lifecycleOwner, cameraSelector, preview, imageCapture
+                owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture
             )
-            camera?.cameraInfo?.zoomState?.observe(lifecycleOwner) { state ->
+            camera?.cameraInfo?.zoomState?.observe(owner) { state ->
                 onZoomChanged?.invoke(state.zoomRatio)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to bind camera", e)
         }
     }
 
     fun setZoom(ratio: Float) {
-        camera?.cameraInfo?.zoomState?.value?.let { state ->
-            val clamped = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
-            camera?.cameraControl?.setZoomRatio(clamped)
+        try {
+            camera?.cameraInfo?.zoomState?.value?.let { state ->
+                val clamped = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+                camera?.cameraControl?.setZoomRatio(clamped)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Zoom failed", e)
         }
     }
 
     fun takePicture(onSaved: ImageCapture.OnImageSavedCallback) {
-        val imageCapture = imageCapture ?: return
+        val capture = imageCapture
+        if (capture == null) {
+            onSaved.onError(ImageCaptureException(0, "Camera not initialized", null))
+            return
+        }
 
-        val photoDir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-            "UHDCamera"
-        )
-        photoDir.mkdirs()
+        try {
+            val photoDir = File(
+                context.getExternalFilesDir(null),
+                "captures"
+            )
+            if (!photoDir.exists() && !photoDir.mkdirs()) {
+                onSaved.onError(ImageCaptureException(0, "Cannot create capture directory", null))
+                return
+            }
 
-        val filename = "RAW_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
-        val file = File(photoDir, filename)
+            val filename = "RAW_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
+            val file = File(photoDir, filename)
 
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(file)
-            .setMetadata(ImageCapture.Metadata().apply {
+            val metadata = ImageCapture.Metadata().apply {
                 isReversedHorizontal = false
                 isReversedVertical = false
-            })
-            .build()
+            }
 
-        imageCapture.takePicture(outputOptions, cameraExecutor, onSaved)
+            val outputOptions = ImageCapture.OutputFileOptions.Builder(file)
+                .setMetadata(metadata)
+                .build()
+
+            capture.takePicture(outputOptions, cameraExecutor, onSaved)
+        } catch (e: Exception) {
+            Log.e(TAG, "Take picture failed", e)
+            onSaved.onError(ImageCaptureException(0, e.message ?: "Unknown error", e))
+        }
     }
 
     fun reinitializeCapture() {
-        imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setTargetRotation(previewView.display?.rotation ?: android.view.Surface.ROTATION_0)
-            .setFlashMode(ImageCapture.FLASH_MODE_AUTO)
-            .build()
+        bindCamera()
     }
 
     fun shutdown() {
+        try {
+            cameraProvider?.unbindAll()
+        } catch (e: Exception) {
+            Log.w(TAG, "Shutdown unbind error", e)
+        }
         cameraExecutor.shutdown()
     }
 }
