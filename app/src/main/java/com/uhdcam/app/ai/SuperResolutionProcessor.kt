@@ -79,7 +79,9 @@ class SuperResolutionProcessor(private val context: Context) {
             val rw = maxOf((w * reducedScale).toInt(), MIN_DIM)
             val rh = maxOf((h * reducedScale).toInt(), MIN_DIM)
             val scaled = Bitmap.createScaledBitmap(bitmap, rw, rh, true)
-            return imageEnhancer.adaptiveSharpen(scaled)
+            val result = imageEnhancer.adaptiveSharpen(scaled)
+            scaled.recycle()
+            return result
         }
 
         return multiStepUpscale(bitmap, targetScale)
@@ -98,6 +100,7 @@ class SuperResolutionProcessor(private val context: Context) {
             val scaled = Bitmap.createScaledBitmap(current, sw, sh, true)
             if (needRecycle) try { current.recycle() } catch (_: Exception) {}
             current = imageEnhancer.adaptiveSharpen(scaled)
+            scaled.recycle()
             needRecycle = true
             remaining /= step
         }

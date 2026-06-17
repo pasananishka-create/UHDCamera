@@ -1,7 +1,6 @@
 package com.uhdcam.app.camera
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.camera.core.*
@@ -78,7 +77,7 @@ class CameraController(
         }
     }
 
-    fun takePicture(onSaved: (Uri) -> Unit, onError: (String) -> Unit) {
+    fun takePicture(onSaved: (File) -> Unit, onError: (String) -> Unit) {
         val capture = imageCapture
         if (capture == null) {
             onError("Camera not initialized")
@@ -111,8 +110,7 @@ class CameraController(
 
             capture.takePicture(outputOptions, cameraExecutor, object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val uri = output.savedUri ?: Uri.fromFile(file)
-                    onSaved(uri)
+                    onSaved(file)
                 }
                 override fun onError(exception: ImageCaptureException) {
                     onError(exception.message ?: "Unknown error")

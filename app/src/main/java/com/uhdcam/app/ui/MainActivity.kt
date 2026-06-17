@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -29,6 +28,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
@@ -165,16 +165,14 @@ class MainActivity : AppCompatActivity() {
         showProcessing(true)
 
         cameraController.takePicture(
-            onSaved = { uri ->
-                if (aiEnhanceEnabled) {
-                    lifecycleScope.launch {
-                        if (!isActive) return@launch
-                        enhanceAndSave(uri)
-                    }
-                } else {
-                    lifecycleScope.launch {
-                        registerInMediaStore(uri)
-                        onEnhanceComplete(uri.toString())
+            onSaved = { file ->
+                lifecycleScope.launch {
+                    if (!isActive) return@launch
+                    if (aiEnhanceEnabled) {
+                        enhanceAndSave(file)
+                    } else {
+                        saveRawToGallery(file)
+                        onEnhanceComplete(file.name)
                     }
                 }
             },
@@ -186,21 +184,21 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private suspend fun enhanceAndSave(uri: Uri) {
+    private suspend fun enhanceAndSave(file: File) {
         try {
             val resultPath = withContext(Dispatchers.IO) {
                 if (!isActive) return@withContext null
-                val inputStream = contentResolver.openInputStream(uri)
-                    ?: return@withContext null
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream.close()
-                if (bitmap == null) return@withContext null
+                val bitmap = FileInputStream(file).use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                } ?: return@withContext null
                 if (!isActive) { bitmap.recycle(); return@withContext null }
 
                 val enhanced = srProcessor.enhance(bitmap)
                 if (enhanced !== bitmap) bitmap.recycle()
 
-                saveEnhancedPhoto(enhanced)
+                val path = saveEnhancedPhoto(enhanced)
+                enhanced.recycle()
+                path
             }
             if (resultPath != null) {
                 onMainThread { onEnhanceComplete(resultPath) }
@@ -261,14 +259,26 @@ class MainActivity : AppCompatActivity() {
         return file.absolutePath
     }
 
-    private fun registerInMediaStore(uri: Uri) {
+    private fun saveRawToGallery(file: File) {
         try {
+            val filename = "RAW_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
             val values = ContentValues().apply {
-                put(MediaStore.Images.Media.IS_PENDING, 0)
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/UHDCamera")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
             }
-            contentResolver.update(uri, values, null, null)
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    FileInputStream(file).use { source -> source.copyTo(out) }
+                }
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "MediaStore update failed", e)
+            Log.w(TAG, "Failed to save raw capture", e)
         }
     }
 
