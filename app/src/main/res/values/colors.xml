@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="dark_surface">#FF1A1A2E</color>
+    <color name="accent">#FF00D4FF</color>
+    <color name="accent_dim">#8000D4FF</color>
+    <color name="control_bg">#80000000</color>
+    <color name="status_ok">#FF4CAF50</color>
+    <color name="status_processing">#FFFFC107</color>
+    <color name="zoom_track">#33FFFFFF</color>
+    <color name="zoom_progress">#FF00D4FF</color>
+</resources>

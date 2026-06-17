@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UHD Camera</string>
+    <string name="capture">Capture</string>
+    <string name="processing">AI Enhancing…</string>
+    <string name="zoom">Zoom: %1$dx</string>
+    <string name="save_success">Saved to gallery</string>
+    <string name="save_error">Save failed</string>
+    <string name="enhance_mode_ai">AI Super-Resolution</string>
+    <string name="enhance_mode_off">Standard</string>
+    <string name="gallery_title">Enhancements</string>
+    <string name="btn_gallery">Gallery</string>
+    <string name="no_images">No enhanced images yet</string>
+    <string name="permission_camera">Camera permission is required</string>
+    <string name="permission_storage">Storage permission needed to save photos</string>
+</resources>

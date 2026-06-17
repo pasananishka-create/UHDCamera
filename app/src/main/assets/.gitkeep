@@ -1,0 +1,10 @@
+Place super-resolution TFLite models here:
+- sr_model_2x.tflite  (2x upscaling model)
+- sr_model_3x.tflite  (3x upscaling model)
+- sr_model_4x.tflite  (4x upscaling model)
+
+Model input format: float32[1, height, width, 3] (RGB, range 0-1)
+Model output format: float32[1, height*scale, width*scale, 3]
+
+If no model is found, the app uses a high-quality
+classical upscaling pipeline (Lanczos + AI sharpening).
