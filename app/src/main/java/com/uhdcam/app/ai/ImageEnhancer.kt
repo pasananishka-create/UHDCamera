@@ -8,65 +8,97 @@ class ImageEnhancer {
 
     @WorkerThread
     fun enhanceDetails(bitmap: Bitmap): Bitmap {
+        if (bitmap.width < 10 || bitmap.height < 10) return bitmap
         var result = bitmap
-        result = localContrastEnhancement(result)
-        result = unsharpMask(result)
-        result = adaptiveSharpen(result)
-        result = denoiseLightly(result)
-        return result
+
+        result = edgePreservingDenoise(result)
+        result = luminanceContrastEnhancement(result)
+        result = adaptiveUnsharpMask(result, radius = 1, amount = 0.7f)
+        result = microcontrastEnhance(result)
+        result = saturationBoost(result, 1.15f)
+
+        return if (result !== bitmap) result else bitmap
     }
 
     @WorkerThread
     fun adaptiveSharpen(bitmap: Bitmap): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        return adaptiveUnsharpMask(bitmap, radius = 2, amount = 0.5f)
+    }
 
-        val r = FloatArray(w * h)
-        val g = FloatArray(w * h)
-        val b = FloatArray(w * h)
-        for (i in pixels.indices) {
-            r[i] = ((pixels[i] shr 16) and 0xFF).toFloat()
-            g[i] = ((pixels[i] shr 8) and 0xFF).toFloat()
-            b[i] = (pixels[i] and 0xFF).toFloat()
+    private fun gaussianKernel1D(radius: Int): FloatArray {
+        val size = radius * 2 + 1
+        val kernel = FloatArray(size)
+        var sum = 0f
+        for (i in 0 until size) {
+            val x = i - radius
+            kernel[i] = exp(-(x * x).toFloat() / (2f * radius * radius))
+            sum += kernel[i]
+        }
+        for (i in 0 until size) kernel[i] /= sum
+        return kernel
+    }
+
+    private fun separableGaussianBlur(pixels: IntArray, w: Int, h: Int, radius: Int): IntArray {
+        val kernel = gaussianKernel1D(radius)
+        val half = radius
+        val temp = IntArray(w * h)
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                var r = 0f; var g = 0f; var b = 0f
+                for (k in kernel.indices) {
+                    val sx = (x + k - half).coerceIn(0, w - 1)
+                    val p = pixels[y * w + sx]
+                    val kw = kernel[k]
+                    r += ((p shr 16) and 0xFF) * kw
+                    g += ((p shr 8) and 0xFF) * kw
+                    b += (p and 0xFF) * kw
+                }
+                temp[y * w + x] = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
+            }
         }
 
-        val lapR = laplacian(r, w, h)
-        val lapG = laplacian(g, w, h)
-        val lapB = laplacian(b, w, h)
-
-        val strength = 0.6f
-        val outPixels = IntArray(w * h)
-        for (i in pixels.indices) {
-            val nr = (r[i] - strength * lapR[i]).coerceIn(0f, 255f).toInt()
-            val ng = (g[i] - strength * lapG[i]).coerceIn(0f, 255f).toInt()
-            val nb = (b[i] - strength * lapB[i]).coerceIn(0f, 255f).toInt()
-            outPixels[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+        val result = IntArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                var r = 0f; var g = 0f; var b = 0f
+                for (k in kernel.indices) {
+                    val sy = (y + k - half).coerceIn(0, h - 1)
+                    val p = temp[sy * w + x]
+                    val kw = kernel[k]
+                    r += ((p shr 16) and 0xFF) * kw
+                    g += ((p shr 8) and 0xFF) * kw
+                    b += (p and 0xFF) * kw
+                }
+                result[y * w + x] = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
+            }
         }
-
-        result.setPixels(outPixels, 0, w, 0, 0, w, h)
         return result
     }
 
-    private fun laplacian(input: FloatArray, w: Int, h: Int): FloatArray {
-        val result = FloatArray(input.size)
-        val kernel = arrayOf(
-            intArrayOf(0, -1, 0),
-            intArrayOf(-1, 4, -1),
-            intArrayOf(0, -1, 0)
-        )
+    private fun blurFloatArray(arr: FloatArray, w: Int, h: Int, radius: Int): FloatArray {
+        val kernel = gaussianKernel1D(radius)
+        val half = radius
+        val temp = FloatArray(w * h)
 
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
+        for (y in 0 until h) {
+            for (x in 0 until w) {
                 var sum = 0f
-                for (ky in 0..2) {
-                    for (kx in 0..2) {
-                        val px = (x + kx - 1).coerceIn(0, w - 1)
-                        val py = (y + ky - 1).coerceIn(0, h - 1)
-                        sum += input[py * w + px] * kernel[ky][kx]
-                    }
+                for (k in kernel.indices) {
+                    val sx = (x + k - half).coerceIn(0, w - 1)
+                    sum += arr[y * w + sx] * kernel[k]
+                }
+                temp[y * w + x] = sum
+            }
+        }
+
+        val result = FloatArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                var sum = 0f
+                for (k in kernel.indices) {
+                    val sy = (y + k - half).coerceIn(0, h - 1)
+                    sum += temp[sy * w + x] * kernel[k]
                 }
                 result[y * w + x] = sum
             }
@@ -74,102 +106,208 @@ class ImageEnhancer {
         return result
     }
 
-    private fun unsharpMask(bitmap: Bitmap): Bitmap {
+    private fun adaptiveUnsharpMask(bitmap: Bitmap, radius: Int, amount: Float): Bitmap {
         val w = bitmap.width
         val h = bitmap.height
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        val blurredPixels = IntArray(w * h)
-        val blurRadius = 2
+        val blurred = separableGaussianBlur(pixels, w, h, radius)
+
+        val out = IntArray(w * h)
+        for (i in pixels.indices) {
+            val oR = (pixels[i] shr 16) and 0xFF
+            val oG = (pixels[i] shr 8) and 0xFF
+            val oB = pixels[i] and 0xFF
+            val bR = (blurred[i] shr 16) and 0xFF
+            val bG = (blurred[i] shr 8) and 0xFF
+            val bB = blurred[i] and 0xFF
+
+            val diffR = oR - bR
+            val diffG = oG - bG
+            val diffB = oB - bB
+
+            val oLum = 0.299f * oR + 0.587f * oG + 0.114f * oB
+            val bLum = 0.299f * bR + 0.587f * bG + 0.114f * bB
+            val edgeMag = abs(oLum - bLum)
+            val adaptive = amount * (0.25f + 0.75f * min(edgeMag / 50f, 1f))
+
+            val nr = (oR + adaptive * diffR).toInt().coerceIn(0, 255)
+            val ng = (oG + adaptive * diffG).toInt().coerceIn(0, 255)
+            val nb = (oB + adaptive * diffB).toInt().coerceIn(0, 255)
+            out[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+        }
+
+        result.setPixels(out, 0, w, 0, 0, w, h)
+        return result
+    }
+
+    private fun luminanceContrastEnhancement(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val lum = FloatArray(w * h)
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+            lum[i] = 0.299f * r + 0.587f * g + 0.114f * b
+        }
+
+        val detailRadius = maxOf(1, min(w, h) / 150)
+        val toneRadius = maxOf(7, min(w, h) / 20)
+        val detailLum = blurFloatArray(lum, w, h, detailRadius)
+        val toneLum = blurFloatArray(lum, w, h, toneRadius)
+
+        val out = IntArray(w * h)
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+            val orig = lum[i]
+            val detail = detailLum[i]
+            val tone = toneLum[i]
+
+            val diff = orig - detail
+            val localContrast = abs(diff) / maxOf(detail, 1f)
+            val gain = 2.0f * (0.4f + 0.6f * min(localContrast * 4f, 1f))
+
+            var enhanced = detail + gain * diff
+
+            val toneRatio = tone / 128f
+            val toneAdj = 1f + 0.15f * (1f - toneRatio).coerceIn(-1f, 1f)
+            enhanced *= toneAdj
+
+            val ratio = enhanced / maxOf(orig, 1f)
+            val nr = (r * ratio).toInt().coerceIn(0, 255)
+            val ng = (g * ratio).toInt().coerceIn(0, 255)
+            val nb = (b * ratio).toInt().coerceIn(0, 255)
+            out[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+        }
+
+        result.setPixels(out, 0, w, 0, 0, w, h)
+        return result
+    }
+
+    private fun microcontrastEnhance(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val lum = FloatArray(w * h)
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+            lum[i] = 0.299f * r + 0.587f * g + 0.114f * b
+        }
+
+        val out = IntArray(w * h)
+        val strength = 0.3f
+
+        for (y in 1 until h - 1) {
+            for (x in 1 until w - 1) {
+                val idx = y * w + x
+                val avgLum = (lum[idx - w - 1] + lum[idx - w] + lum[idx - w + 1] +
+                    lum[idx - 1] + lum[idx + 1] +
+                    lum[idx + w - 1] + lum[idx + w] + lum[idx + w + 1]) / 8f
+
+                val diff = lum[idx] - avgLum
+                val adj = strength * diff / maxOf(lum[idx], 0.001f)
+
+                val p = pixels[idx]
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val nr = (r * (1f + adj)).toInt().coerceIn(0, 255)
+                val ng = (g * (1f + adj)).toInt().coerceIn(0, 255)
+                val nb = (b * (1f + adj)).toInt().coerceIn(0, 255)
+                out[idx] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
+        }
+        for (x in 0 until w) {
+            out[x] = pixels[x]
+            out[(h - 1) * w + x] = pixels[(h - 1) * w + x]
+        }
+        for (y in 0 until h) {
+            out[y * w] = pixels[y * w]
+            out[y * w + w - 1] = pixels[y * w + w - 1]
+        }
+
+        result.setPixels(out, 0, w, 0, 0, w, h)
+        return result
+    }
+
+    private fun edgePreservingDenoise(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val spatialSigma = 2f
+        val rangeSigma = 30f
+        val radius = 2
+
+        val spatialWeight = FloatArray((radius * 2 + 1) * (radius * 2 + 1))
+        for (dy in -radius..radius) {
+            for (dx in -radius..radius) {
+                val idx = (dy + radius) * (radius * 2 + 1) + (dx + radius)
+                spatialWeight[idx] = exp(-(dx * dx + dy * dy).toFloat() / (2f * spatialSigma * spatialSigma))
+            }
+        }
+
+        val out = IntArray(w * h)
         for (y in 0 until h) {
             for (x in 0 until w) {
-                var sumR = 0; var sumG = 0; var sumB = 0; var count = 0
-                for (dy in -blurRadius..blurRadius) {
-                    for (dx in -blurRadius..blurRadius) {
+                val c = pixels[y * w + x]
+                val cR = (c shr 16) and 0xFF
+                val cG = (c shr 8) and 0xFF
+                val cB = c and 0xFF
+                val cLum = 0.299f * cR + 0.587f * cG + 0.114f * cB
+
+                var wSum = 0f
+                var sR = 0f; var sG = 0f; var sB = 0f
+
+                for (dy in -radius..radius) {
+                    for (dx in -radius..radius) {
                         val px = (x + dx).coerceIn(0, w - 1)
                         val py = (y + dy).coerceIn(0, h - 1)
-                        val p = pixels[py * w + px]
-                        sumR += (p shr 16) and 0xFF
-                        sumG += (p shr 8) and 0xFF
-                        sumB += p and 0xFF
-                        count++
-                    }
-                }
-                val avgR = sumR / count; val avgG = sumG / count; val avgB = sumB / count
-                blurredPixels[y * w + x] = (0xFF shl 24) or (avgR shl 16) or (avgG shl 8) or avgB
-            }
-        }
+                        val n = pixels[py * w + px]
+                        val nR = (n shr 16) and 0xFF
+                        val nG = (n shr 8) and 0xFF
+                        val nB = n and 0xFF
+                        val nLum = 0.299f * nR + 0.587f * nG + 0.114f * nB
 
-        val outPixels = IntArray(w * h)
-        val amount = 0.3f
-        for (i in pixels.indices) {
-            val origR = (pixels[i] shr 16) and 0xFF
-            val origG = (pixels[i] shr 8) and 0xFF
-            val origB = pixels[i] and 0xFF
-            val blurR = (blurredPixels[i] shr 16) and 0xFF
-            val blurG = (blurredPixels[i] shr 8) and 0xFF
-            val blurB = blurredPixels[i] and 0xFF
-            val nr = (origR + amount * (origR - blurR)).toInt().coerceIn(0, 255)
-            val ng = (origG + amount * (origG - blurG)).toInt().coerceIn(0, 255)
-            val nb = (origB + amount * (origB - blurB)).toInt().coerceIn(0, 255)
-            outPixels[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
-        }
+                        val sidx = (dy + radius) * (radius * 2 + 1) + (dx + radius)
+                        val rangeW = exp(-((cLum - nLum) * (cLum - nLum)) / (2f * rangeSigma * rangeSigma))
+                        val wgt = spatialWeight[sidx] * rangeW
 
-        result.setPixels(outPixels, 0, w, 0, 0, w, h)
-        return result
-    }
-
-    private fun localContrastEnhancement(bitmap: Bitmap): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        val radius = (Math.max(w, h) / 50).coerceIn(2, 20)
-
-        val outPixels = IntArray(w * h)
-
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                var sumR = 0; var sumG = 0; var sumB = 0
-                val kyStart = max(0, y - radius)
-                val kyEnd = min(h - 1, y + radius)
-                val kxStart = max(0, x - radius)
-                val kxEnd = min(w - 1, x + radius)
-                var count = 0
-                for (ky in kyStart..kyEnd) {
-                    for (kx in kxStart..kxEnd) {
-                        val pixel = pixels[ky * w + kx]
-                        sumR += (pixel shr 16) and 0xFF
-                        sumG += (pixel shr 8) and 0xFF
-                        sumB += pixel and 0xFF
-                        count++
+                        sR += nR * wgt
+                        sG += nG * wgt
+                        sB += nB * wgt
+                        wSum += wgt
                     }
                 }
 
-                if (count > 0) {
-                    val avgR = sumR / count; val avgG = sumG / count; val avgB = sumB / count
-                    val curPixel = pixels[y * w + x]
-                    val curR = (curPixel shr 16) and 0xFF
-                    val curG = (curPixel shr 8) and 0xFF
-                    val curB = curPixel and 0xFF
-                    val contrast = 1.4f
-                    val nr = ((avgR + (curR - avgR) * contrast)).toInt().coerceIn(0, 255)
-                    val ng = ((avgG + (curG - avgG) * contrast)).toInt().coerceIn(0, 255)
-                    val nb = ((avgB + (curB - avgB) * contrast)).toInt().coerceIn(0, 255)
-                    outPixels[y * w + x] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
-                }
+                val nr = (sR / maxOf(wSum, 0.001f)).toInt().coerceIn(0, 255)
+                val ng = (sG / maxOf(wSum, 0.001f)).toInt().coerceIn(0, 255)
+                val nb = (sB / maxOf(wSum, 0.001f)).toInt().coerceIn(0, 255)
+                out[y * w + x] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
             }
         }
 
-        result.setPixels(outPixels, 0, w, 0, 0, w, h)
+        result.setPixels(out, 0, w, 0, 0, w, h)
         return result
     }
 
-    private fun denoiseLightly(bitmap: Bitmap): Bitmap {
+    private fun saturationBoost(bitmap: Bitmap, factor: Float): Bitmap {
         val w = bitmap.width
         val h = bitmap.height
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -177,37 +315,15 @@ class ImageEnhancer {
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
         val out = IntArray(w * h)
 
-        val threshold = 30
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
-                val center = pixels[y * w + x]
-                val cR = (center shr 16) and 0xFF
-                val cG = (center shr 8) and 0xFF
-                val cB = center and 0xFF
-                var sumR = 0; var sumG = 0; var sumB = 0; var count = 0
-
-                for (dy in -1..1) {
-                    for (dx in -1..1) {
-                        if (dx == 0 && dy == 0) continue
-                        val neighbor = pixels[(y + dy) * w + (x + dx)]
-                        val nR = (neighbor shr 16) and 0xFF
-                        val nG = (neighbor shr 8) and 0xFF
-                        val nB = neighbor and 0xFF
-                        if (abs(cR - nR) < threshold && abs(cG - nG) < threshold && abs(cB - nB) < threshold) {
-                            sumR += nR; sumG += nG; sumB += nB; count++
-                        }
-                    }
-                }
-
-                if (count > 0) {
-                    val nr = (sumR / count).coerceIn(0, 255)
-                    val ng = (sumG / count).coerceIn(0, 255)
-                    val nb = (sumB / count).coerceIn(0, 255)
-                    out[y * w + x] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
-                } else {
-                    out[y * w + x] = center
-                }
-            }
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+            val gray = (r + g + b) / 3f
+            val nr = (gray + (r - gray) * factor).toInt().coerceIn(0, 255)
+            val ng = (gray + (g - gray) * factor).toInt().coerceIn(0, 255)
+            val nb = (gray + (b - gray) * factor).toInt().coerceIn(0, 255)
+            out[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
         }
 
         result.setPixels(out, 0, w, 0, 0, w, h)
