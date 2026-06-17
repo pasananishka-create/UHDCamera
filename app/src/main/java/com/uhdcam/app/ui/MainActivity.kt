@@ -3,6 +3,9 @@ package com.uhdcam.app.ui
 import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -13,7 +16,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
@@ -47,10 +49,7 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val storagePermission = registerForActivityResult(
-        if (Build.VERSION.SDK_INT >= 33)
-            ActivityResultContracts.RequestPermission()
-        else
-            ActivityResultContracts.RequestMultiplePermissions()
+        ActivityResultContracts.RequestMultiplePermissions()
     ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,7 +97,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
                 != PackageManager.PERMISSION_GRANTED
-            ) storagePermission.launch(Manifest.permission.READ_MEDIA_IMAGES)
+            ) storagePermission.launch(arrayOf(Manifest.permission.READ_MEDIA_IMAGES))
         } else if (Build.VERSION.SDK_INT <= 28) {
             storagePermission.launch(arrayOf(
                 Manifest.permission.WRITE_EXTERNAL_STORAGE,
@@ -108,7 +107,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCamera() {
-        cameraController.startCamera(lifecycle)
+        cameraController.startCamera(this)
         cameraController.onZoomChanged = { zoom ->
             val progress = ((zoom - 1f) / 9f * 100f).toInt().coerceIn(0, 100)
             binding.zoomSlider.progress = progress
@@ -160,7 +159,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private suspend fun enhanceAndSave(uri: android.net.Uri) {
+    private suspend fun enhanceAndSave(uri: Uri) {
         withContext(Dispatchers.IO) {
             try {
                 val inputStream = contentResolver.openInputStream(uri) ?: return@withContext
